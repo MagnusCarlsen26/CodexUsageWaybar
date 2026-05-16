@@ -1,0 +1,12 @@
+{
+  "currency": "USD",
+  "label": "◎",
+  "codex_model_patterns": ["codex", "gpt-5.*codex"],
+  "codex_log_path": "/home/khushal/.codex/log/codex-tui.log",
+  "five_hour_token_limit": 0,
+  "weekly_token_limit": 0,
+  "daily_warn_usd": 5.0,
+  "daily_critical_usd": 10.0,
+  "timeout_seconds": 8,
+  "cache_seconds": 300
+}

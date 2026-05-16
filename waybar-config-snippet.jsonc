@@ -1,0 +1,6 @@
+"custom/codex_usage": {
+  "exec": "/home/khushal/Desktop/Projects/CodexUsageWaybar/codex_usage_waybar.py",
+  "return-type": "json",
+  "interval": 300,
+  "tooltip": true
+}

@@ -1,0 +1,15 @@
+#custom-codex_usage.ok {
+  color: #a6e3a1;
+}
+
+#custom-codex_usage.warn {
+  color: #f9e2af;
+}
+
+#custom-codex_usage.critical {
+  color: #fab387;
+}
+
+#custom-codex_usage.error {
+  color: #f38ba8;
+}
