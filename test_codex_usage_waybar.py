@@ -107,6 +107,88 @@ class CodexUsageWaybarTests(unittest.TestCase):
         self.assertNotIn("API billing", payload["tooltip"])
         self.assertIn("Source: codex /status", payload["tooltip"])
 
+    def test_main_reuses_cached_status_when_refresh_fails(self):
+        cached_output = {
+            "text": "◎ 5h 55% W 88%",
+            "tooltip": "Codex CLI status\n5-hour limit: 55% left (resets 16:56)\nWeekly limit: 88% left (resets 13:50 on 20 May)\nSource: codex /status",
+            "class": "ok",
+        }
+        module.write_cache(cached_output)
+
+        with (
+            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            module.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["text"], cached_output["text"])
+        self.assertEqual(payload["class"], "warn")
+        self.assertIn("Showing last known good status.", payload["tooltip"])
+        self.assertIn("Latest refresh failed: Could not read Codex CLI /status: boom", payload["tooltip"])
+
+    def test_main_falls_back_to_error_when_refresh_fails_without_cache(self):
+        with (
+            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            module.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["text"], "◎ status ?")
+        self.assertEqual(payload["class"], "error")
+        self.assertEqual(payload["tooltip"], "Could not read Codex CLI /status: boom")
+
+    def test_failed_refresh_does_not_overwrite_last_successful_cache(self):
+        status_text = """
+        5h limit:             [███████████░░░░░░░░░] 55% left (resets 16:56)
+        Weekly limit:         [██████████████████░░] 88% left
+                              (resets 13:50 on 20 May)
+        """
+        with mock.patch.object(module, "run_codex_status", return_value=status_text):
+            module.main()
+
+        before = module.read_cache(300)
+        self.assertIsNotNone(before)
+        self.assertEqual(before["text"], "◎ 5h 55% W 88%")
+
+        with (
+            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            module.main()
+
+        after = module.read_cache(300)
+        self.assertIsNotNone(after)
+        self.assertEqual(after["text"], "◎ 5h 55% W 88%")
+        self.assertEqual(after["tooltip"], before["tooltip"])
+
+    def test_expired_cached_status_is_not_reused(self):
+        cached_output = {
+            "text": "◎ 5h 55% W 88%",
+            "tooltip": "Codex CLI status",
+            "class": "ok",
+        }
+        module.write_cache(cached_output)
+
+        with (
+            mock.patch("time.time", return_value=1_000),
+            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            module.write_cache(cached_output)
+
+        with (
+            mock.patch("time.time", return_value=1_301),
+            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            module.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["text"], "◎ status ?")
+        self.assertEqual(payload["class"], "error")
+
     def test_parse_codex_status(self):
         parsed = module.parse_codex_status(
             "5h limit: [████░] 21% left (resets 16:56)\n"

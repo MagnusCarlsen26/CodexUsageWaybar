@@ -573,6 +573,19 @@ def make_cli_status_output(status: dict[str, str | int | None], config: dict[str
     }
 
 
+def make_stale_cli_status_output(cached: dict[str, str], message: str) -> dict[str, str]:
+    tooltip = cached["tooltip"]
+    if tooltip:
+        tooltip = f"{tooltip}\n\nShowing last known good status.\nLatest refresh failed: {message}"
+    else:
+        tooltip = f"Showing last known good status.\nLatest refresh failed: {message}"
+    return {
+        "text": cached["text"],
+        "tooltip": tooltip,
+        "class": "warn",
+    }
+
+
 def live_output(config: dict[str, Any], api_key: str) -> dict[str, str]:
     start_time, end_time = today_range()
     timeout = float(config.get("timeout_seconds", DEFAULT_CONFIG["timeout_seconds"]))
@@ -597,13 +610,17 @@ def main() -> int:
     try:
         status_text = run_codex_status(float(config.get("timeout_seconds", DEFAULT_CONFIG["timeout_seconds"])))
         output = make_cli_status_output(parse_codex_status(status_text), config)
+        write_cache(output)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        output = {
-            "text": f"{label} status ?",
-            "tooltip": f"Could not read Codex CLI /status: {exc}",
-            "class": "error",
-        }
-    write_cache(output)
+        cached = read_cache(int(config.get("cache_seconds", DEFAULT_CONFIG["cache_seconds"])))
+        if cached is not None:
+            output = make_stale_cli_status_output(cached, f"Could not read Codex CLI /status: {exc}")
+        else:
+            output = {
+                "text": f"{label} status ?",
+                "tooltip": f"Could not read Codex CLI /status: {exc}",
+                "class": "error",
+            }
     print(json.dumps(output, ensure_ascii=True))
     return 0
 
