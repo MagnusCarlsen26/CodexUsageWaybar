@@ -441,7 +441,7 @@ def error_output(kind: str, message: str, config: dict[str, Any]) -> dict[str, s
     }
 
 
-def read_cache(max_age: int) -> dict[str, str] | None:
+def read_cache(max_age: int) -> dict[str, Any] | None:
     try:
         with CACHE_PATH.open("r", encoding="utf-8") as handle:
             cached = json.load(handle)
@@ -457,7 +457,12 @@ def read_cache(max_age: int) -> dict[str, str] | None:
         return None
     if not all(isinstance(output.get(key), str) for key in ("text", "tooltip", "class")):
         return None
-    return {"text": output["text"], "tooltip": output["tooltip"], "class": "warn"}
+    return {
+        "text": output["text"],
+        "tooltip": output["tooltip"],
+        "class": "warn",
+        "saved_at": float(saved_at),
+    }
 
 
 def write_cache(output: dict[str, str]) -> None:
@@ -573,12 +578,24 @@ def make_cli_status_output(status: dict[str, str | int | None], config: dict[str
     }
 
 
-def make_stale_cli_status_output(cached: dict[str, str], message: str) -> dict[str, str]:
+def make_stale_cli_status_output(cached: dict[str, Any], message: str) -> dict[str, str]:
     tooltip = cached["tooltip"]
+    updated_at = cached.get("saved_at")
+    updated_line = None
+    if isinstance(updated_at, (int, float)):
+        updated_line = f"Last updated: {format_datetime(float(updated_at))}"
     if tooltip:
-        tooltip = f"{tooltip}\n\nShowing last known good status.\nLatest refresh failed: {message}"
+        suffix = ["Showing last known good status."]
+        if updated_line:
+            suffix.append(updated_line)
+        suffix.append(f"Latest refresh failed: {message}")
+        tooltip = f"{tooltip}\n\n" + "\n".join(suffix)
     else:
-        tooltip = f"Showing last known good status.\nLatest refresh failed: {message}"
+        suffix = ["Showing last known good status."]
+        if updated_line:
+            suffix.append(updated_line)
+        suffix.append(f"Latest refresh failed: {message}")
+        tooltip = "\n".join(suffix)
     return {
         "text": cached["text"],
         "tooltip": tooltip,

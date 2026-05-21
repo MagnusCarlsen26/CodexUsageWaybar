@@ -113,9 +113,13 @@ class CodexUsageWaybarTests(unittest.TestCase):
             "tooltip": "Codex CLI status\n5-hour limit: 55% left (resets 16:56)\nWeekly limit: 88% left (resets 13:50 on 20 May)\nSource: codex /status",
             "class": "ok",
         }
-        module.write_cache(cached_output)
+        with (
+            mock.patch("time.time", return_value=1_700_000_000),
+        ):
+            module.write_cache(cached_output)
 
         with (
+            mock.patch("time.time", return_value=1_700_000_060),
             mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
@@ -125,6 +129,7 @@ class CodexUsageWaybarTests(unittest.TestCase):
         self.assertEqual(payload["text"], cached_output["text"])
         self.assertEqual(payload["class"], "warn")
         self.assertIn("Showing last known good status.", payload["tooltip"])
+        self.assertIn("Last updated: Wed, 15 Nov 2023 03:43 AM IST", payload["tooltip"])
         self.assertIn("Latest refresh failed: Could not read Codex CLI /status: boom", payload["tooltip"])
 
     def test_main_falls_back_to_error_when_refresh_fails_without_cache(self):
