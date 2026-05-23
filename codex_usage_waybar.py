@@ -481,37 +481,52 @@ def strip_ansi(value: str) -> str:
 def run_codex_status(timeout: float) -> str:
     master_fd, slave_fd = pty.openpty()
     fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+    env = os.environ.copy()
+    if env.get("TERM") in (None, "", "dumb"):
+        env["TERM"] = "xterm-256color"
     proc = subprocess.Popen(
         ["codex", "--no-alt-screen"],
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
+        env=env,
         close_fds=True,
         start_new_session=True,
     )
     os.close(slave_fd)
     output = bytearray()
-    sent_status = False
+    status_attempts = 0
+    handled_update_prompt = False
     send_at = time.monotonic() + 3
     deadline = time.monotonic() + timeout
 
     try:
         while time.monotonic() < deadline:
-            if not sent_status and time.monotonic() >= send_at:
-                os.write(master_fd, b"/status\n\r")
-                sent_status = True
             readable, _, _ = select.select([master_fd], [], [], 0.1)
-            if not readable:
-                continue
-            try:
-                chunk = os.read(master_fd, 8192)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output.extend(chunk)
+            if readable:
+                try:
+                    chunk = os.read(master_fd, 8192)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output.extend(chunk)
             text = strip_ansi(output.decode("utf-8", errors="replace"))
-            if sent_status and "5h limit:" in text and "Weekly limit:" in text:
+            if not handled_update_prompt and "Update available!" in text and "Skip" in text:
+                os.write(master_fd, b"2\n\r")
+                handled_update_prompt = True
+                send_at = time.monotonic() + 1
+                continue
+            if status_attempts == 0 and time.monotonic() >= send_at and "›" in text:
+                os.write(master_fd, b"/status\n\r")
+                status_attempts += 1
+            if status_attempts > 0 and "refresh requested; run /status again shortly" in text:
+                os.write(master_fd, b"/status\n\r")
+                status_attempts += 1
+                output.clear()
+                time.sleep(2)
+                continue
+            if status_attempts > 0 and "5h limit:" in text and "Weekly limit:" in text:
                 break
         return strip_ansi(output.decode("utf-8", errors="replace"))
     finally:
@@ -538,18 +553,21 @@ def parse_codex_status(text: str) -> dict[str, str | int | None]:
     normalized = " ".join(line.strip() for line in text.splitlines() if line.strip())
     five = FIVE_HOUR_STATUS_RE.search(normalized)
     weekly = WEEKLY_STATUS_RE.search(normalized)
-    if not five or not weekly:
-        raise ValueError("Codex status output did not include both limits")
+    if not five and not weekly:
+        raise ValueError("Codex status output did not include limits")
     return {
-        "five_hour_percent": int(five.group("percent")),
-        "five_hour_reset": five.group("reset"),
-        "weekly_percent": int(weekly.group("percent")),
-        "weekly_reset": weekly.group("reset"),
+        "five_hour_percent": int(five.group("percent")) if five else None,
+        "five_hour_reset": five.group("reset") if five else None,
+        "weekly_percent": int(weekly.group("percent")) if weekly else None,
+        "weekly_reset": weekly.group("reset") if weekly else None,
     }
 
 
-def status_class(five_hour_percent: int, weekly_percent: int) -> str:
-    lowest = min(five_hour_percent, weekly_percent)
+def status_class(five_hour_percent: int | None, weekly_percent: int | None) -> str:
+    percentages = [percent for percent in (five_hour_percent, weekly_percent) if percent is not None]
+    if not percentages:
+        return "error"
+    lowest = min(percentages)
     if lowest <= 10:
         return "critical"
     if lowest <= 25:
@@ -559,22 +577,27 @@ def status_class(five_hour_percent: int, weekly_percent: int) -> str:
 
 def make_cli_status_output(status: dict[str, str | int | None], config: dict[str, Any]) -> dict[str, str]:
     label = str(config.get("label", DEFAULT_LABEL))
-    five_percent = int(status["five_hour_percent"] or 0)
-    weekly_percent = int(status["weekly_percent"] or 0)
-    five_reset = status.get("five_hour_reset") or "unknown"
-    weekly_reset = status.get("weekly_reset") or "unknown"
+    five_percent = status["five_hour_percent"]
+    weekly_percent = status["weekly_percent"]
+    five_text = f"{five_percent}%" if five_percent is not None else "?%"
+    weekly_text = f"{weekly_percent}%" if weekly_percent is not None else "?%"
+    five_reset = status.get("five_hour_reset")
+    weekly_reset = status.get("weekly_reset")
     tooltip = "\n".join(
         [
             "Codex CLI status",
-            f"5-hour limit: {five_percent}% left (resets {five_reset})",
-            f"Weekly limit: {weekly_percent}% left (resets {weekly_reset})",
+            f"5-hour limit: {five_text} left" + (f" (resets {five_reset})" if five_reset else ""),
+            f"Weekly limit: {weekly_text} left" + (f" (resets {weekly_reset})" if weekly_reset else ""),
             "Source: codex /status",
         ]
     )
     return {
-        "text": f"{label} 5h {five_percent}% W {weekly_percent}%",
+        "text": f"{label} 5h {five_text} W {weekly_text}",
         "tooltip": tooltip,
-        "class": status_class(five_percent, weekly_percent),
+        "class": status_class(
+            int(five_percent) if five_percent is not None else None,
+            int(weekly_percent) if weekly_percent is not None else None,
+        ),
     }
 
 

@@ -205,6 +205,14 @@ class CodexUsageWaybarTests(unittest.TestCase):
         self.assertEqual(parsed["weekly_percent"], 74)
         self.assertEqual(parsed["weekly_reset"], "13:50 on 20 May")
 
+    def test_parse_codex_status_allows_weekly_only(self):
+        parsed = module.parse_codex_status("Weekly limit: [████████░] 74% left (resets 13:50 on 20 May)")
+
+        self.assertIsNone(parsed["five_hour_percent"])
+        self.assertIsNone(parsed["five_hour_reset"])
+        self.assertEqual(parsed["weekly_percent"], 74)
+        self.assertEqual(parsed["weekly_reset"], "13:50 on 20 May")
+
     def test_http_401_maps_to_auth(self):
         exc = error.HTTPError("https://example.test", 401, "Unauthorized", Message(), io.BytesIO())
         with mock.patch("urllib.request.urlopen", side_effect=exc):
