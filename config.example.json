@@ -8,5 +8,7 @@
   "daily_warn_usd": 5.0,
   "daily_critical_usd": 10.0,
   "timeout_seconds": 8,
-  "cache_seconds": 300
+  "cache_seconds": 300,
+  "status_retries": 3,
+  "retry_delay_seconds": 5
 }

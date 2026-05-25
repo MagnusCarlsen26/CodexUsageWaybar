@@ -107,7 +107,26 @@ class CodexUsageWaybarTests(unittest.TestCase):
         self.assertNotIn("API billing", payload["tooltip"])
         self.assertIn("Source: codex /status", payload["tooltip"])
 
-    def test_main_reuses_cached_status_when_refresh_fails(self):
+    def test_main_retries_status_before_error(self):
+        status_text = """
+        5h limit:             [███████████░░░░░░░░░] 55% left (resets 16:56)
+        Weekly limit:         [██████████████████░░] 88% left
+                              (resets 13:50 on 20 May)
+        """
+        self.config.update({"status_retries": 2, "retry_delay_seconds": 0})
+        with (
+            mock.patch.object(module, "load_config", return_value=self.config),
+            mock.patch.object(module, "run_codex_status", side_effect=[ValueError("boot not ready"), status_text]) as run_status,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            module.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(run_status.call_count, 2)
+        self.assertEqual(payload["text"], "◎ 5h 55% W 88%")
+        self.assertEqual(payload["class"], "ok")
+
+    def test_main_does_not_show_cached_status_when_refresh_fails(self):
         cached_output = {
             "text": "◎ 5h 55% W 88%",
             "tooltip": "Codex CLI status\n5-hour limit: 55% left (resets 16:56)\nWeekly limit: 88% left (resets 13:50 on 20 May)\nSource: codex /status",
@@ -118,22 +137,27 @@ class CodexUsageWaybarTests(unittest.TestCase):
         ):
             module.write_cache(cached_output)
 
+        self.config.update({"status_retries": 2, "retry_delay_seconds": 0})
         with (
             mock.patch("time.time", return_value=1_700_000_060),
-            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
+            mock.patch.object(module, "load_config", return_value=self.config),
+            mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")) as run_status,
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
             module.main()
 
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["text"], cached_output["text"])
-        self.assertEqual(payload["class"], "warn")
-        self.assertIn("Showing last known good status.", payload["tooltip"])
-        self.assertIn("Last updated: Wed, 15 Nov 2023 03:43 AM IST", payload["tooltip"])
-        self.assertIn("Latest refresh failed: Could not read Codex CLI /status: boom", payload["tooltip"])
+        self.assertEqual(run_status.call_count, 2)
+        self.assertEqual(payload["text"], "◎ status ?")
+        self.assertEqual(payload["class"], "error")
+        self.assertIn("after 2 attempt(s)", payload["tooltip"])
+        self.assertNotIn(cached_output["text"], payload["text"])
+        self.assertNotIn("Showing last known good status.", payload["tooltip"])
 
     def test_main_falls_back_to_error_when_refresh_fails_without_cache(self):
+        self.config.update({"status_retries": 3, "retry_delay_seconds": 0})
         with (
+            mock.patch.object(module, "load_config", return_value=self.config),
             mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
@@ -142,7 +166,7 @@ class CodexUsageWaybarTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["text"], "◎ status ?")
         self.assertEqual(payload["class"], "error")
-        self.assertEqual(payload["tooltip"], "Could not read Codex CLI /status: boom")
+        self.assertEqual(payload["tooltip"], "Could not read Codex CLI /status after 3 attempt(s): boom")
 
     def test_failed_refresh_does_not_overwrite_last_successful_cache(self):
         status_text = """
@@ -157,7 +181,9 @@ class CodexUsageWaybarTests(unittest.TestCase):
         self.assertIsNotNone(before)
         self.assertEqual(before["text"], "◎ 5h 55% W 88%")
 
+        self.config.update({"status_retries": 1, "retry_delay_seconds": 0})
         with (
+            mock.patch.object(module, "load_config", return_value=self.config),
             mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
             mock.patch("sys.stdout", new_callable=io.StringIO),
         ):
@@ -175,9 +201,11 @@ class CodexUsageWaybarTests(unittest.TestCase):
             "class": "ok",
         }
         module.write_cache(cached_output)
+        self.config.update({"status_retries": 1, "retry_delay_seconds": 0})
 
         with (
             mock.patch("time.time", return_value=1_000),
+            mock.patch.object(module, "load_config", return_value=self.config),
             mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):
@@ -185,6 +213,7 @@ class CodexUsageWaybarTests(unittest.TestCase):
 
         with (
             mock.patch("time.time", return_value=1_301),
+            mock.patch.object(module, "load_config", return_value=self.config),
             mock.patch.object(module, "run_codex_status", side_effect=ValueError("boom")),
             mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
         ):

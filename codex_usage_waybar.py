@@ -35,6 +35,8 @@ DEFAULT_CONFIG = {
     "daily_critical_usd": 10.0,
     "timeout_seconds": 20,
     "cache_seconds": 300,
+    "status_retries": 2,
+    "retry_delay_seconds": 3,
 }
 CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "codex-usage-waybar" / "cache.json"
 CONFIG_PATH = Path(os.environ.get("CODEX_USAGE_WAYBAR_CONFIG", Path.home() / ".config" / "codex-usage-waybar" / "config.json"))
@@ -626,6 +628,27 @@ def make_stale_cli_status_output(cached: dict[str, Any], message: str) -> dict[s
     }
 
 
+def read_codex_status_with_retries(config: dict[str, Any]) -> str:
+    timeout = float(config.get("timeout_seconds", DEFAULT_CONFIG["timeout_seconds"]))
+    retries = max(1, int(config.get("status_retries", DEFAULT_CONFIG["status_retries"])))
+    retry_delay = max(0.0, float(config.get("retry_delay_seconds", DEFAULT_CONFIG["retry_delay_seconds"])))
+    last_error: Exception | None = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            status_text = run_codex_status(timeout)
+            parse_codex_status(status_text)
+            return status_text
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            last_error = exc
+            if attempt < retries and retry_delay > 0:
+                time.sleep(retry_delay)
+
+    if last_error is None:
+        raise ValueError("Codex status output did not include limits")
+    raise last_error
+
+
 def live_output(config: dict[str, Any], api_key: str) -> dict[str, str]:
     start_time, end_time = today_range()
     timeout = float(config.get("timeout_seconds", DEFAULT_CONFIG["timeout_seconds"]))
@@ -648,19 +671,16 @@ def main() -> int:
     config = load_config()
     label = str(config.get("label", DEFAULT_LABEL))
     try:
-        status_text = run_codex_status(float(config.get("timeout_seconds", DEFAULT_CONFIG["timeout_seconds"])))
+        status_text = read_codex_status_with_retries(config)
         output = make_cli_status_output(parse_codex_status(status_text), config)
         write_cache(output)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        cached = read_cache(int(config.get("cache_seconds", DEFAULT_CONFIG["cache_seconds"])))
-        if cached is not None:
-            output = make_stale_cli_status_output(cached, f"Could not read Codex CLI /status: {exc}")
-        else:
-            output = {
-                "text": f"{label} status ?",
-                "tooltip": f"Could not read Codex CLI /status: {exc}",
-                "class": "error",
-            }
+        retries = max(1, int(config.get("status_retries", DEFAULT_CONFIG["status_retries"])))
+        output = {
+            "text": f"{label} status ?",
+            "tooltip": f"Could not read Codex CLI /status after {retries} attempt(s): {exc}",
+            "class": "error",
+        }
     print(json.dumps(output, ensure_ascii=True))
     return 0
 
