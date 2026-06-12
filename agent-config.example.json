@@ -1,0 +1,11 @@
+{
+  "label": "◉",
+  "auto_label": "◈",
+  "api_label": "</>",
+  "api_base": "https://api2.cursor.sh",
+  "auth_path": "~/.config/cursor/auth.json",
+  "timeout_seconds": 15,
+  "status_retries": 2,
+  "retry_delay_seconds": 3,
+  "cache_seconds": 300
+}

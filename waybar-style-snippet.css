@@ -13,3 +13,19 @@
 #custom-codex_usage.error {
   color: #f38ba8;
 }
+
+#custom-agent_usage.ok {
+  color: #a6e3a1;
+}
+
+#custom-agent_usage.warn {
+  color: #f9e2af;
+}
+
+#custom-agent_usage.critical {
+  color: #fab387;
+}
+
+#custom-agent_usage.error {
+  color: #f38ba8;
+}
