@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "label": "✳",
+  "timeout_seconds": 25,
+  "cache_seconds": 300,
+  "status_retries": 2,
+  "retry_delay_seconds": 3
+}

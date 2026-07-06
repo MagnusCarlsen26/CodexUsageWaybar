@@ -1,5 +1,6 @@
 #custom-codex_usage.disabled,
-#custom-agent_usage.disabled {
+#custom-agent_usage.disabled,
+#custom-claude_usage.disabled {
   opacity: 0;
   padding: 0;
   margin: 0;
@@ -37,5 +38,21 @@
 }
 
 #custom-agent_usage.error {
+  color: #f38ba8;
+}
+
+#custom-claude_usage.ok {
+  color: #a6e3a1;
+}
+
+#custom-claude_usage.warn {
+  color: #f9e2af;
+}
+
+#custom-claude_usage.critical {
+  color: #fab387;
+}
+
+#custom-claude_usage.error {
   color: #f38ba8;
 }
