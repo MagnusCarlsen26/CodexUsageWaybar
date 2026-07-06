@@ -311,6 +311,21 @@ class CodexUsageWaybarTests(unittest.TestCase):
         self.assertEqual(output["class"], "ok")
         self.assertIn("Token/model usage unavailable", output["tooltip"])
 
+    def test_main_disabled_skips_status_lookup(self):
+        self.config["enabled"] = False
+        with (
+            mock.patch.object(module, "load_config", return_value=self.config),
+            mock.patch.object(module, "run_codex_status") as run_status,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = module.main()
+
+        run_status.assert_not_called()
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["class"], "disabled")
+        self.assertEqual(payload["text"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

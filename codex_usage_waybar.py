@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "cache_seconds": 300,
     "status_retries": 2,
     "retry_delay_seconds": 3,
+    "enabled": True,
 }
 CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "codex-usage-waybar" / "cache.json"
 CONFIG_PATH = Path(os.environ.get("CODEX_USAGE_WAYBAR_CONFIG", Path.home() / ".config" / "codex-usage-waybar" / "config.json"))
@@ -667,8 +668,16 @@ def live_output(config: dict[str, Any], api_key: str) -> dict[str, str]:
     return make_output(amount, cost_found, usage, config, note=usage_note)
 
 
+def disabled_output() -> dict[str, str]:
+    return {"text": "", "tooltip": "", "class": "disabled"}
+
+
 def main() -> int:
     config = load_config()
+    if not config.get("enabled", True):
+        print(json.dumps(disabled_output(), ensure_ascii=True))
+        return 0
+
     label = str(config.get("label", DEFAULT_LABEL))
     try:
         status_text = read_codex_status_with_retries(config)

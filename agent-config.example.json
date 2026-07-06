@@ -1,4 +1,5 @@
 {
+  "enabled": true,
   "label": "◉",
   "auto_label": "◈",
   "api_label": "</>",

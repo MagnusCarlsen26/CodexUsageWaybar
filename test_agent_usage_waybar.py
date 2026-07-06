@@ -255,6 +255,23 @@ class AgentUsageWaybarTests(unittest.TestCase):
         assert before is not None
         self.assertEqual(after["text"], before["text"])
 
+    def test_main_disabled_skips_api_calls(self):
+        self.config["enabled"] = False
+        with (
+            mock.patch.object(module, "load_config", return_value=self.config),
+            mock.patch.object(module, "get_access_token", return_value="token") as get_token,
+            mock.patch.object(module, "fetch_current_period_usage") as fetch_usage,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = module.main()
+
+        get_token.assert_not_called()
+        fetch_usage.assert_not_called()
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["class"], "disabled")
+        self.assertEqual(payload["text"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

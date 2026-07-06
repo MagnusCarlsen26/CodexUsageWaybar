@@ -1,4 +1,5 @@
 {
+  "enabled": true,
   "currency": "USD",
   "label": "◎",
   "codex_model_patterns": ["codex", "gpt-5.*codex"],

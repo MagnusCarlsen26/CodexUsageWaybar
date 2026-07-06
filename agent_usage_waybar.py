@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "status_retries": 2,
     "retry_delay_seconds": 3,
     "cache_seconds": 300,
+    "enabled": True,
 }
 CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "agent-usage-waybar" / "cache.json"
 CONFIG_PATH = Path(
@@ -422,8 +423,16 @@ def live_output(token: str, config: dict[str, Any]) -> dict[str, str]:
     raise ApiError("unknown", "Cursor usage response did not include plan or request quotas")
 
 
+def disabled_output() -> dict[str, str]:
+    return {"text": "", "tooltip": "", "class": "disabled"}
+
+
 def main() -> int:
     config = load_config()
+    if not config.get("enabled", True):
+        print(json.dumps(disabled_output(), ensure_ascii=True))
+        return 0
+
     token = get_access_token(config)
     if not token:
         output = error_output(
