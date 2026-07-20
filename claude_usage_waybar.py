@@ -38,11 +38,23 @@ ANSI_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x
 PERCENT_USED_RE = re.compile(r"(\d+)\s*%\s*used", re.IGNORECASE)
 RESETS_RE = re.compile(r"Resets\s+(.+?)\s*$", re.IGNORECASE)
 
-SECTIONS = (
-    ("session", re.compile(r"Current session", re.IGNORECASE)),
-    ("week_all", re.compile(r"Current week\s*\(all models\)", re.IGNORECASE)),
-    ("week_opus", re.compile(r"Current week\s*\(Opus\)", re.IGNORECASE)),
-)
+SESSION_RE = re.compile(r"Current session", re.IGNORECASE)
+WEEK_ALL_RE = re.compile(r"Current week\s*\(all models\)", re.IGNORECASE)
+# The third bucket is a per-model weekly limit whose name changes between
+# Claude versions (Opus, Fable, …); match any model rather than a fixed name.
+WEEK_MODEL_RE = re.compile(r"Current week\s*\((?!all models\))(.+?)\)", re.IGNORECASE)
+
+
+def match_header(line: str) -> tuple[str, str | None] | None:
+    """Return (section_key, model_name) if the line is a section header."""
+    if WEEK_ALL_RE.search(line):
+        return "week_all", None
+    model = WEEK_MODEL_RE.search(line)
+    if model is not None:
+        return "week_model", model.group(1).strip()
+    if SESSION_RE.search(line):
+        return "session", None
+    return None
 
 
 def load_config() -> dict[str, Any]:
@@ -58,13 +70,39 @@ def load_config() -> dict[str, Any]:
     return config
 
 
+TERM_ROWS = 45
+TERM_COLS = 160
+
+
 def strip_ansi(value: str) -> str:
     return ANSI_RE.sub("", value).replace("\r", "\n")
 
 
+def render_screen(data: bytes, rows: int = TERM_ROWS, cols: int = TERM_COLS) -> str:
+    """Reconstruct the final terminal screen from raw PTY bytes.
+
+    The /usage panel is an alt-screen TUI that repaints in place, so naive
+    ANSI stripping merges overwritten frames and truncates lines (e.g. the
+    per-model weekly header). Feeding the bytes through a real VT emulator
+    yields the panel exactly as displayed. Falls back to strip_ansi if pyte
+    is unavailable.
+    """
+    try:
+        import pyte
+    except ImportError:
+        return strip_ansi(data.decode("utf-8", errors="replace"))
+    screen = pyte.Screen(cols, rows)
+    stream = pyte.ByteStream(screen)
+    try:
+        stream.feed(data)
+    except Exception:
+        return strip_ansi(data.decode("utf-8", errors="replace"))
+    return "\n".join(screen.display)
+
+
 def run_claude_usage(timeout: float) -> str:
     master_fd, slave_fd = pty.openpty()
-    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", TERM_ROWS, TERM_COLS, 0, 0))
     env = os.environ.copy()
     if env.get("TERM") in (None, "", "dumb"):
         env["TERM"] = "xterm-256color"
@@ -112,7 +150,7 @@ def run_claude_usage(timeout: float) -> str:
                         if chunk:
                             output.extend(chunk)
                 break
-        return strip_ansi(output.decode("utf-8", errors="replace"))
+        return render_screen(bytes(output))
     finally:
         try:
             os.write(master_fd, b"\x03\x04")
@@ -137,27 +175,36 @@ def parse_claude_usage(text: str) -> dict[str, Any]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     result: dict[str, Any] = {}
     current: str | None = None
+    # The /usage TUI repaints several times and later frames get truncated,
+    # which drops section headers (e.g. "Current week (all models)" -> "wek
+    # (all models)"). Without a matched header the following percentages would
+    # bleed into whichever section was previously current. To prevent that we
+    # only accept the FIRST percentage after a header; any later stray percent
+    # in the same block (from a header-less truncated section) is ignored until
+    # a real header re-opens a section.
+    awaiting_percent = False
     for line in lines:
-        matched_header = None
-        for name, pattern in SECTIONS:
-            if pattern.search(line):
-                matched_header = name
-                break
-        if matched_header is not None:
-            current = matched_header
-            result.setdefault(current, {"percent_used": None, "reset": None})
+        header = match_header(line)
+        if header is not None:
+            name, model = header
+            current = name
+            bucket = result.setdefault(current, {"percent_used": None, "reset": None})
+            if model is not None:
+                bucket["model"] = model
+            awaiting_percent = True
             # a header line may also carry the percentage on the same wrapped line
             percent = PERCENT_USED_RE.search(line)
             if percent is not None:
-                result[current]["percent_used"] = int(percent.group(1))
+                bucket["percent_used"] = int(percent.group(1))
+                awaiting_percent = False
             continue
         if current is None:
             continue
         bucket = result[current]
-        # Percentages are stable across repaints; take the latest.
         percent = PERCENT_USED_RE.search(line)
-        if percent is not None:
+        if percent is not None and awaiting_percent:
             bucket["percent_used"] = int(percent.group(1))
+            awaiting_percent = False
         # Alt-screen repaints can truncate the reset string, so keep the longest
         # (most complete) copy we observe rather than letting a partial clobber it.
         resets = RESETS_RE.search(line)
@@ -197,7 +244,7 @@ def make_status_output(parsed: dict[str, Any], config: dict[str, Any]) -> dict[s
     label = str(config.get("label", DEFAULT_LABEL))
     session_left = percent_left(parsed.get("session"))
     week_left = percent_left(parsed.get("week_all"))
-    opus_left = percent_left(parsed.get("week_opus"))
+    model_left = percent_left(parsed.get("week_model"))
 
     session_text = f"{session_left}%" if session_left is not None else "?%"
     week_text = f"{week_left}%" if week_left is not None else "?%"
@@ -205,16 +252,17 @@ def make_status_output(parsed: dict[str, Any], config: dict[str, Any]) -> dict[s
     tooltip_lines = ["Claude Code usage", ""]
     session = parsed.get("session") or {}
     week = parsed.get("week_all") or {}
-    opus = parsed.get("week_opus") or {}
+    model = parsed.get("week_model") or {}
     tooltip_lines.append(
         f"Session: {session_text} left" + (f" (resets {session['reset']})" if session.get("reset") else "")
     )
     tooltip_lines.append(
         f"Weekly (all models): {week_text} left" + (f" (resets {week['reset']})" if week.get("reset") else "")
     )
-    if opus_left is not None:
+    if model_left is not None:
+        model_name = model.get("model", "model")
         tooltip_lines.append(
-            f"Weekly (Opus): {opus_left}% left" + (f" (resets {opus['reset']})" if opus.get("reset") else "")
+            f"Weekly ({model_name}): {model_left}% left" + (f" (resets {model['reset']})" if model.get("reset") else "")
         )
     tooltip_lines.append("")
     tooltip_lines.append("Source: claude /usage")
@@ -222,7 +270,7 @@ def make_status_output(parsed: dict[str, Any], config: dict[str, Any]) -> dict[s
     return {
         "text": f"{label} S {session_text} W {week_text}",
         "tooltip": "\n".join(tooltip_lines),
-        "class": status_class(session_left, week_left, opus_left),
+        "class": status_class(session_left, week_left, model_left),
     }
 
 

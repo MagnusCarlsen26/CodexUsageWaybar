@@ -1,0 +1,5 @@
+# Runtime dependencies for the Claude usage Waybar module.
+# pyte renders the `claude /usage` alt-screen TUI through a real VT emulator so
+# per-model weekly buckets (e.g. Fable) are read reliably instead of from
+# truncated repaint frames. On Arch: `sudo pacman -S python-pyte`.
+pyte>=0.8

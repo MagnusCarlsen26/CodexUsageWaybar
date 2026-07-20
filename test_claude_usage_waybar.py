@@ -31,7 +31,8 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parsed["session"]["reset"], "9:30pm (Asia/Kolkata)")
         self.assertEqual(parsed["week_all"]["percent_used"], 0)
         self.assertEqual(parsed["week_all"]["reset"], "Jul 6, 7:30pm (Asia/Kolkata)")
-        self.assertEqual(parsed["week_opus"]["percent_used"], 12)
+        self.assertEqual(parsed["week_model"]["percent_used"], 12)
+        self.assertEqual(parsed["week_model"]["model"], "Opus")
 
     def test_parses_without_opus(self):
         text = """
@@ -45,7 +46,32 @@ Resets Jul 9, 5:00pm (UTC)
         parsed = module.parse_claude_usage(text)
         self.assertEqual(parsed["session"]["percent_used"], 30)
         self.assertEqual(parsed["week_all"]["percent_used"], 45)
-        self.assertNotIn("week_opus", parsed)
+        self.assertNotIn("week_model", parsed)
+
+    def test_truncated_repaints_do_not_bleed(self):
+        # Real /usage output repaints several times; later frames truncate
+        # headers ("Current week (all models)" -> "wek (all models)",
+        # "(Fable)") so their percentages must not bleed into the session.
+        text = """
+Current session
+██▌                                               5%used
+Resets 1:30pm (Asia/Kolkata)
+Current week (all models)
+██████▌                                           13%used
+Resets Jul 20, 7:30pm (Asia/Kolkata)
+Current session
+██▌                                                5%used
+Resets1:30pm(Asia/Kolkata)
+wek (all models)
+█████14% used
+Jul 20, 7:30pm (Asi/Kolkata)
+Fable)
+0% used
+"""
+        parsed = module.parse_claude_usage(text)
+        self.assertEqual(parsed["session"]["percent_used"], 5)
+        self.assertEqual(parsed["week_all"]["percent_used"], 13)
+        self.assertNotIn("week_model", parsed)
 
     def test_raises_when_no_limits(self):
         with self.assertRaises(ValueError):
